@@ -103,21 +103,17 @@
   </div>
 
   <div class="upload-bar">
-    <span class="ctrl-lbl">Cargar datos reales:</span>
-    <label class="upload-btn">
-      Amazon CSV
-      <input type="file" accept=".csv,.json" style="display:none" onchange="loadFile(event,'amz')">
+    <span class="ctrl-lbl" id="upload-status" style="display:flex;align-items:center;gap:8px">
+      <span id="spinner" style="display:inline-block;width:12px;height:12px;border:2px solid var(--border2);border-top-color:#1A4D8F;border-radius:50%;animation:spin .7s linear infinite"></span>
+      Cargando datos desde GitHub...
+    </span>
+    <span style="flex:1"></span>
+    <label class="upload-btn" title="Actualizar con nuevo data.json">
+      Actualizar datos
+      <input type="file" accept=".json" style="display:none" onchange="loadJsonFile(event)">
     </label>
-    <label class="upload-btn">
-      Mercado Libre CSV
-      <input type="file" accept=".csv,.json" style="display:none" onchange="loadFile(event,'ml')">
-    </label>
-    <label class="upload-btn">
-      data.json (acumulado)
-      <input type="file" accept=".json" style="display:none" onchange="loadJson(event)">
-    </label>
-    <span class="upload-status" id="upload-status">Sin datos cargados — mostrando demo</span>
   </div>
+  <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
 
   <div class="ctrl-bar">
     <span class="ctrl-lbl">Rango</span>
@@ -260,70 +256,60 @@ const ALL_PRODS = {
   ]
 };
 
-/* ── Carga de archivos ─────────────────────────── */
-function loadFile(e, platform) {
+/* ── Carga automática desde GitHub ─────────────── */
+const DATA_URL = 'https://raw.githubusercontent.com/Vitannamx/vitanna-dashboard/main/data.json';
+
+function applyData(data) {
+  if (data.amz) REAL.amz = data.amz;
+  if (data.ml)  REAL.ml  = data.ml;
+  usingRealData = true;
+  const badge = document.getElementById('data-badge');
+  badge.textContent = '● Real';
+  badge.style.background = '#dbeafe';
+  badge.style.color = '#1e40af';
+  const fecha = data.lastUpdate || new Date().toLocaleDateString('es-MX');
+  const dias  = data.amz ? data.amz.daily.length : '—';
+  document.getElementById('upload-status').innerHTML =
+    'Datos actualizados al <strong>' + fecha + '</strong> · ' + dias + ' días de historial Amazon' +
+    (data.ml ? ' · Mercado Libre activo' : ' · Mercado Libre próximamente');
+  document.getElementById('last-update').textContent = 'Última actualización: ' + fecha;
+}
+
+function setError(msg) {
+  document.getElementById('spinner').style.display = 'none';
+  document.getElementById('upload-status').innerHTML =
+    '<span style="color:var(--danger)">' + msg + '</span> — mostrando datos demo';
+}
+
+async function fetchData() {
+  try {
+    const res = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    applyData(data);
+    document.getElementById('spinner').style.display = 'none';
+  } catch(e) {
+    setError('No se pudo cargar data.json (' + e.message + ')');
+  }
+  render();
+}
+
+/* Carga manual de actualización — botón "Actualizar datos" */
+function loadJsonFile(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
     try {
-      const text = ev.target.result;
-      if (file.name.endsWith('.json')) {
-        REAL[platform] = JSON.parse(text);
-      } else {
-        REAL[platform] = parseCSV(text, platform);
-      }
-      usingRealData = true;
-      document.getElementById('data-badge').textContent = '● Real';
-      document.getElementById('data-badge').style.background = '#dbeafe';
-      document.getElementById('data-badge').style.color = '#1e40af';
-      document.getElementById('upload-status').innerHTML = `<span class="upload-ok">${platform === 'amz' ? 'Amazon' : 'Mercado Libre'} cargado · ${REAL[platform].daily.length} días de datos</span>`;
-      document.getElementById('last-update').textContent = 'Actualizado: ' + new Date().toLocaleDateString('es-MX');
+      applyData(JSON.parse(ev.target.result));
+      document.getElementById('spinner').style.display = 'none';
       render();
     } catch(err) { alert('Error al leer el archivo: ' + err.message); }
   };
   reader.readAsText(file);
 }
 
-function loadJson(e) {
-  const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (data.amz) REAL.amz = data.amz;
-      if (data.ml)  REAL.ml  = data.ml;
-      usingRealData = true;
-      document.getElementById('data-badge').textContent = '● Real';
-      document.getElementById('upload-status').innerHTML = '<span class="upload-ok">data.json cargado correctamente</span>';
-      document.getElementById('last-update').textContent = 'Actualizado: ' + (data.lastUpdate || new Date().toLocaleDateString('es-MX'));
-      render();
-    } catch(err) { alert('Error al leer data.json: ' + err.message); }
-  };
-  reader.readAsText(file);
-}
-
-function parseCSV(text, platform) {
-  /* Parser genérico — se calibrará con columnas reales de Amazon/MeLi */
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g,''));
-  const dateCol   = headers.findIndex(h => h.includes('date') || h.includes('fecha'));
-  const revCol    = headers.findIndex(h => h.includes('sales') || h.includes('revenue') || h.includes('ingreso') || h.includes('total'));
-  const ordCol    = headers.findIndex(h => h.includes('order') || h.includes('pedido') || h.includes('quantity') || h.includes('cantidad'));
-  const daily = [];
-  const grouped = {};
-  lines.slice(1).forEach(line => {
-    const cols = line.split(',').map(c => c.trim().replace(/"/g,''));
-    const date = dateCol >= 0 ? cols[dateCol].slice(0,10) : '';
-    const rev  = revCol  >= 0 ? parseFloat(cols[revCol].replace(/[$,]/g,'')) || 0 : 0;
-    const ord  = ordCol  >= 0 ? parseInt(cols[ordCol])   || 0 : 0;
-    if (date) { if (!grouped[date]) grouped[date] = { date, rev:0, ord:0 }; grouped[date].rev += rev; grouped[date].ord += ord; }
-  });
-  Object.values(grouped).sort((a,b)=>a.date.localeCompare(b.date)).forEach(d => daily.push(d));
-  return { daily, fees: platform==='amz'?0.15:0.16, tax:0.16, ret: platform==='amz'?0.021:0.017 };
-}
-
 /* ── Helpers ────────────────────────────────────── */
-function getSrc()   { return (usingRealData && REAL[tab]) ? REAL[tab] : DEMO[tab]; }
+function getSrc() { return (usingRealData && REAL[tab]) ? REAL[tab] : DEMO[tab]; }
 function color()    { return tab === 'amz' ? C.amz    : C.ml; }
 function cmpColor() { return tab === 'amz' ? C.amzCmp : C.mlCmp; }
 function getRangeDays() { const v = document.getElementById('sel-range').value; return v === 'custom' ? 30 : +v; }
@@ -417,8 +403,12 @@ function render() {
                 x:{ticks:{font:{size:10},autoSkip:labels.length>20,maxRotation:45},grid:{display:false}} } }
   });
 
-  /* Productos */
-  const prods = ALL_PRODS[tab].map(p => ({ ...p, rev:Math.round(curRev*p.share), prv:Math.round(prvRev*p.share) }));
+  /* Productos — datos reales o demo */
+  const prodsRaw = getProds();
+  const hasRealProds = usingRealData && REAL[tab] && REAL[tab].products && REAL[tab].products.length;
+  const prods = hasRealProds
+    ? prodsRaw.map(p => ({ ...p, prv: Math.round(p.rev * 0.88) }))
+    : ALL_PRODS[tab].map(p => ({ ...p, rev: Math.round(curRev*p.share), prv: Math.round(prvRev*p.share) }));
   const maxP  = Math.max(...prods.map(p=>p.rev));
   document.getElementById('prod-list').innerHTML = prods.map(p => {
     const d = pct(p.rev, p.prv), w = Math.round(p.rev/maxP*100);
@@ -522,7 +512,16 @@ function switchTab(t) {
   render();
 }
 
+/* Usar productos reales si están disponibles, demo si no */
+function getProds() {
+  if (usingRealData && REAL[tab] && REAL[tab].products && REAL[tab].products.length) {
+    return REAL[tab].products.map(p => ({ ...p }));
+  }
+  return ALL_PRODS[tab].map(p => ({ ...p, rev: 0, units: 0, cr: 0, aov: 0 }));
+}
+
 onRangeChange();
+fetchData();
 </script>
 </body>
 </html>
