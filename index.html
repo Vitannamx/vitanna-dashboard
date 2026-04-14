@@ -58,10 +58,17 @@
   .leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); }
   .leg-sq { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .desg-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
-  .desg-row:last-child { border-bottom: none; font-weight: 600; }
-  .desg-lbl { color: var(--text2); }
-  .desg-val { font-weight: 500; color: var(--text); }
+  .desg-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; cursor: pointer; user-select: none; }
+  .desg-row:last-child { border-bottom: none; font-weight: 600; cursor: default; }
+  .desg-row:hover:not(:last-child) { background: var(--bg2); border-radius: 4px; padding-left: 6px; padding-right: 6px; }
+  .desg-lbl { color: var(--text2); display: flex; align-items: center; gap: 6px; }
+  .desg-arrow { font-size: 10px; color: var(--text3); transition: transform .2s; display: inline-block; }
+  .desg-arrow.open { transform: rotate(90deg); }
+  .desg-detail { overflow: hidden; max-height: 0; transition: max-height .25s ease; background: var(--bg2); border-radius: 6px; margin: 2px 0 4px; }
+  .desg-detail.open { max-height: 200px; }
+  .desg-detail-inner { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+  .desg-detail-line { display: flex; justify-content: space-between; font-size: 12px; color: var(--text2); }
+  .desg-detail-line span:last-child { color: var(--text); font-weight: 500; }
   .desg-pct { font-size: 11px; color: var(--text3); margin-left: 6px; }
   .prod-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--border); }
   .prod-row:last-child { border-bottom: none; }
@@ -118,10 +125,13 @@
   <div class="ctrl-bar">
     <span class="ctrl-lbl">Rango</span>
     <select id="sel-range" onchange="onRangeChange()">
-      <option value="7">Últimos 7 días</option>
-      <option value="30" selected>Último mes</option>
-      <option value="90">Últimos 90 días</option>
-      <option value="365">Último año</option>
+      <option value="7d" selected>Últimos 7 días</option>
+      <option value="30d">Últimos 30 días</option>
+      <option value="90d">Últimos 90 días</option>
+      <option value="mtd">Mes hasta la fecha</option>
+      <option value="ytd">Año hasta la fecha</option>
+      <option value="prevmonth">Mes anterior</option>
+      <option value="prevyear">Año anterior</option>
       <option value="custom">Personalizado</option>
     </select>
     <span id="custom-wrap" style="display:none;gap:6px;align-items:center;font-size:11px;color:var(--text2)">
@@ -312,15 +322,56 @@ function loadJsonFile(e) {
 function getSrc() { return (usingRealData && REAL[tab]) ? REAL[tab] : DEMO[tab]; }
 function color()    { return tab === 'amz' ? C.amz    : C.ml; }
 function cmpColor() { return tab === 'amz' ? C.amzCmp : C.mlCmp; }
-function getRangeDays() { const v = document.getElementById('sel-range').value; return v === 'custom' ? 30 : +v; }
-function getSlice(src, days) { return src.slice(Math.max(0, src.length - days)); }
-function getPrev(src, days)  { const e = src.length - days; return src.slice(Math.max(0, e - days), e); }
 function fmx(n) { return '$' + Math.round(n).toLocaleString('es-MX'); }
 function pct(a, b) { return b === 0 ? 0 : ((a - b) / b * 100); }
 function dEl(v) { const u = v >= 0; return `<span class="${u?'up':'dn'}">${u?'▲':'▼'} ${Math.abs(v).toFixed(1)}%</span>`; }
 
+/* Fix 1 — Rango basado en fechas reales, no en N días contados desde el final */
+function today() {
+  const d = new Date(); d.setHours(0,0,0,0); return d;
+}
+function dateStr(d) { return d.toISOString().slice(0,10); }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
+
+function getRangeWindow() {
+  const v = document.getElementById('sel-range').value;
+  const t = today();
+  if (v === 'custom') {
+    const f = document.getElementById('date-from').value;
+    const to = document.getElementById('date-to').value;
+    return { from: f || dateStr(addDays(t,-6)), to: to || dateStr(t) };
+  }
+  if (v === '7d')        return { from: dateStr(addDays(t,-6)),   to: dateStr(t) };
+  if (v === '30d')       return { from: dateStr(addDays(t,-29)),  to: dateStr(t) };
+  if (v === '90d')       return { from: dateStr(addDays(t,-89)),  to: dateStr(t) };
+  if (v === 'mtd')       return { from: dateStr(new Date(t.getFullYear(), t.getMonth(), 1)), to: dateStr(t) };
+  if (v === 'ytd')       return { from: dateStr(new Date(t.getFullYear(), 0, 1)), to: dateStr(t) };
+  if (v === 'prevmonth') {
+    const f = new Date(t.getFullYear(), t.getMonth()-1, 1);
+    const to2 = new Date(t.getFullYear(), t.getMonth(), 0);
+    return { from: dateStr(f), to: dateStr(to2) };
+  }
+  if (v === 'prevyear') {
+    return { from: (t.getFullYear()-1)+'-01-01', to: (t.getFullYear()-1)+'-12-31' };
+  }
+  return { from: dateStr(addDays(t,-6)), to: dateStr(t) };
+}
+
+function getPrevWindow(win) {
+  const f = new Date(win.from), t2 = new Date(win.to);
+  const spanMs = t2 - f + 86400000;
+  const spanDays = Math.round(spanMs / 86400000);
+  const pf = new Date(f); pf.setDate(pf.getDate() - spanDays);
+  const pt = new Date(f); pt.setDate(pt.getDate() - 1);
+  return { from: dateStr(pf), to: dateStr(pt) };
+}
+
+function sliceByWindow(daily, win) {
+  return daily.filter(d => d.date >= win.from && d.date <= win.to);
+}
+
 function groupData(slice, grp) {
-  if (grp === 'day') return slice.map((d, i) => ({ label: d.date ? d.date.slice(5) : 'D'+(i+1), rev: d.rev, ord: d.ord }));
+  if (grp === 'day') return slice.map(d => ({ label: d.date.slice(5), rev: d.rev, ord: d.ord }));
   if (grp === 'week') {
     const out = [];
     for (let i = 0; i < slice.length; i += 7) {
@@ -333,7 +384,7 @@ function groupData(slice, grp) {
     const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
     const groups = {};
     slice.forEach(d => {
-      const m = d.date ? new Date(d.date).getMonth() : 0;
+      const m = new Date(d.date).getMonth();
       if (!groups[m]) groups[m] = { rev:0, ord:0, mn:m };
       groups[m].rev += d.rev; groups[m].ord += d.ord;
     });
@@ -342,7 +393,7 @@ function groupData(slice, grp) {
   if (grp === 'year') {
     const groups = {};
     slice.forEach(d => {
-      const y = d.date ? d.date.slice(0,4) : '2025';
+      const y = d.date.slice(0,4);
       if (!groups[y]) groups[y] = { rev:0, ord:0 };
       groups[y].rev += d.rev; groups[y].ord += d.ord;
     });
@@ -351,12 +402,88 @@ function groupData(slice, grp) {
   return [];
 }
 
+/* Fix 3 — Desglose interactivo */
+function toggleDesglose(id) {
+  const det = document.getElementById(id);
+  const arr = document.getElementById(id+'-arrow');
+  if (!det) return;
+  const isOpen = det.classList.contains('open');
+  document.querySelectorAll('.desg-detail.open').forEach(el => { el.classList.remove('open'); });
+  document.querySelectorAll('.desg-arrow.open').forEach(el => { el.classList.remove('open'); });
+  if (!isOpen) { det.classList.add('open'); if (arr) arr.classList.add('open'); }
+}
+
+function renderDesglose(curRev, fees, tax, ret) {
+  const feeAmt  = Math.round(curRev * fees);
+  const taxAmt  = Math.round(curRev * tax);
+  const retAmt  = Math.round(curRev * ret);
+  const net2    = curRev - feeAmt - taxAmt - retAmt;
+  const platName = tab === 'amz' ? 'Amazon' : 'Mercado Libre';
+  const feeRate  = tab === 'amz' ? 15 : 16;
+
+  document.getElementById('desglose').innerHTML = `
+    <div class="desg-row" onclick="toggleDesglose('d-brutos')">
+      <span class="desg-lbl"><span class="desg-arrow" id="d-brutos-arrow">▶</span> Ingresos brutos</span>
+      <span class="desg-val">${fmx(curRev)}</span>
+    </div>
+    <div class="desg-detail" id="d-brutos">
+      <div class="desg-detail-inner">
+        <div class="desg-detail-line"><span>Ventas de productos</span><span>${fmx(curRev)}</span></div>
+        <div class="desg-detail-line"><span>Devoluciones aplicadas</span><span style="color:var(--warning)">-${fmx(retAmt)}</span></div>
+        <div class="desg-detail-line"><span>Ingresos netos de ventas</span><span>${fmx(curRev - retAmt)}</span></div>
+      </div>
+    </div>
+
+    <div class="desg-row" onclick="toggleDesglose('d-fees')">
+      <span class="desg-lbl"><span class="desg-arrow" id="d-fees-arrow">▶</span> Tarifas plataforma</span>
+      <span class="desg-val" style="color:var(--danger)">-${fmx(feeAmt)}<span class="desg-pct">${feeRate}%</span></span>
+    </div>
+    <div class="desg-detail" id="d-fees">
+      <div class="desg-detail-inner">
+        <div class="desg-detail-line"><span>Comisión ${platName} (${feeRate}%)</span><span style="color:var(--danger)">-${fmx(feeAmt)}</span></div>
+        <div class="desg-detail-line"><span>Tarifa por referencia</span><span style="color:var(--danger)">-${fmx(Math.round(feeAmt*0.7))}</span></div>
+        <div class="desg-detail-line"><span>Tarifa logística / fulfillment</span><span style="color:var(--danger)">-${fmx(Math.round(feeAmt*0.3))}</span></div>
+      </div>
+    </div>
+
+    <div class="desg-row" onclick="toggleDesglose('d-tax')">
+      <span class="desg-lbl"><span class="desg-arrow" id="d-tax-arrow">▶</span> Impuestos (IVA)</span>
+      <span class="desg-val" style="color:var(--danger)">-${fmx(taxAmt)}<span class="desg-pct">16%</span></span>
+    </div>
+    <div class="desg-detail" id="d-tax">
+      <div class="desg-detail-inner">
+        <div class="desg-detail-line"><span>IVA trasladado (16%)</span><span style="color:var(--danger)">-${fmx(taxAmt)}</span></div>
+        <div class="desg-detail-line"><span>Base gravable</span><span>${fmx(Math.round(curRev / 1.16))}</span></div>
+        <div class="desg-detail-line"><span>IVA incluido en precio</span><span style="color:var(--text3);font-size:11px">El monto ya está en el bruto</span></div>
+      </div>
+    </div>
+
+    <div class="desg-row" onclick="toggleDesglose('d-ret')">
+      <span class="desg-lbl"><span class="desg-arrow" id="d-ret-arrow">▶</span> Devoluciones</span>
+      <span class="desg-val" style="color:var(--warning)">-${fmx(retAmt)}<span class="desg-pct">${(ret*100).toFixed(1)}%</span></span>
+    </div>
+    <div class="desg-detail" id="d-ret">
+      <div class="desg-detail-inner">
+        <div class="desg-detail-line"><span>Tasa de devolución</span><span>${(ret*100).toFixed(2)}%</span></div>
+        <div class="desg-detail-line"><span>Monto devuelto estimado</span><span style="color:var(--warning)">-${fmx(retAmt)}</span></div>
+        <div class="desg-detail-line"><span>Impacto en margen</span><span style="color:var(--warning)">${(ret/(1-fees-tax)*100).toFixed(1)} pts</span></div>
+      </div>
+    </div>
+
+    <div class="desg-row" style="cursor:default;margin-top:4px;border-top:0.5px solid var(--border2);padding-top:10px">
+      <span class="desg-lbl" style="font-weight:600;color:var(--text)">Ganancia neta estimada</span>
+      <span class="desg-val" style="color:var(--success);font-size:15px">${fmx(net2)}<span class="desg-pct">${Math.round(net2/curRev*100)}%</span></span>
+    </div>`;
+}
+
 /* ── Render principal ───────────────────────────── */
 function render() {
   const src  = getSrc();
-  const days = getRangeDays();
-  const cur  = getSlice(src.daily, days);
-  const prv  = getPrev(src.daily, days);
+  const win  = getRangeWindow();
+  const wprv = getPrevWindow(win);
+
+  const cur  = sliceByWindow(src.daily, win);
+  const prv  = sliceByWindow(src.daily, wprv);
   const cg   = groupData(cur, group);
   const pg   = groupData(prv, group);
 
@@ -388,13 +515,13 @@ function render() {
   const curVals  = cg.map(x => x.rev);
   const prvVals  = pg.map(x => x.rev);
   while (prvVals.length < labels.length) prvVals.push(null);
-  const h = Math.max(180, Math.min(300, labels.length * 28 + 80));
+  const h = Math.max(180, Math.min(300, Math.max(labels.length, 2) * 28 + 80));
   document.getElementById('trend-wrap').style.height = h + 'px';
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(document.getElementById('trendChart').getContext('2d'), {
     type: 'line',
     data: { labels, datasets: [
-      { label:'Actual',      data:curVals, borderColor:color(),    backgroundColor:color()+'22',    fill:true,  tension:0.35, pointRadius:4, pointBackgroundColor:color() },
+      { label:'Actual',      data:curVals, borderColor:color(),    backgroundColor:color()+'22',    fill:true,  tension:0.35, pointRadius:labels.length===1?6:4, pointBackgroundColor:color() },
       { label:'Comparativo', data:prvVals, borderColor:cmpColor(), backgroundColor:'transparent', fill:false, tension:0.35, pointRadius:3, borderDash:[5,4], pointBackgroundColor:cmpColor() }
     ]},
     options: { responsive:true, maintainAspectRatio:false,
@@ -403,13 +530,12 @@ function render() {
                 x:{ticks:{font:{size:10},autoSkip:labels.length>20,maxRotation:45},grid:{display:false}} } }
   });
 
-  /* Productos — datos reales o demo */
-  const prodsRaw = getProds();
+  /* Productos */
   const hasRealProds = usingRealData && REAL[tab] && REAL[tab].products && REAL[tab].products.length;
   const prods = hasRealProds
-    ? prodsRaw.map(p => ({ ...p, prv: Math.round(p.rev * 0.88) }))
+    ? REAL[tab].products.map(p => ({ ...p, prv: Math.round(p.rev * 0.88) }))
     : ALL_PRODS[tab].map(p => ({ ...p, rev: Math.round(curRev*p.share), prv: Math.round(prvRev*p.share) }));
-  const maxP  = Math.max(...prods.map(p=>p.rev));
+  const maxP  = Math.max(...prods.map(p=>p.rev), 1);
   document.getElementById('prod-list').innerHTML = prods.map(p => {
     const d = pct(p.rev, p.prv), w = Math.round(p.rev/maxP*100);
     return `<div class="prod-row">
@@ -420,7 +546,8 @@ function render() {
     </div>`;
   }).join('');
 
-  /* Share donut */
+  /* Fix 2 — Share % siempre suma 100% sobre el total real del período */
+  const totalRevForShare = curRev > 0 ? curRev : prods.reduce((s,p)=>s+p.rev,0);
   const sorted   = [...prods].sort((a,b)=>b.rev-a.rev);
   const top10    = sorted.slice(0, 10);
   const others   = sorted.slice(10);
@@ -433,11 +560,15 @@ function render() {
     type: 'doughnut',
     data: { labels:dLabels, datasets:[{ data:dData, backgroundColor:dColors, borderWidth:2, borderColor:'transparent', hoverOffset:4 }] },
     options: { responsive:true, maintainAspectRatio:false, cutout:'62%',
-      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>` ${ctx.label}: ${fmx(ctx.raw)} (${Math.round(ctx.raw/curRev*100)}%)`}} } }
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>{
+        const total = dData.reduce((s,v)=>s+v,0);
+        return ` ${ctx.label}: ${fmx(ctx.raw)} (${(ctx.raw/total*100).toFixed(1)}%)`;
+      }}}} }
   });
+  const shareTotal = dData.reduce((s,v)=>s+v, 0);
   document.getElementById('share-list').innerHTML =
     top10.map((p,i) => {
-      const ps = Math.round(p.rev/curRev*100);
+      const ps = shareTotal > 0 ? (p.rev/shareTotal*100).toFixed(1) : '0.0';
       return `<div class="share-row">
         <span class="share-rank">${i+1}</span>
         <span class="share-name" title="${p.name}">${p.name}</span>
@@ -446,7 +577,7 @@ function render() {
         <span class="share-amt">${fmx(p.rev)}</span>
       </div>`;
     }).join('') +
-    (others.length ? `<div class="otros-row"><span style="color:var(--text2)">Otros ${others.length} productos</span><span style="display:flex;align-items:center;gap:8px"><span style="font-weight:600">${Math.round(othRev/curRev*100)}%</span><span style="color:var(--text2);font-size:11px">${fmx(othRev)}</span></span></div>` : '');
+    (others.length ? `<div class="otros-row"><span style="color:var(--text2)">Otros ${others.length} productos</span><span style="display:flex;align-items:center;gap:8px"><span style="font-weight:600">${shareTotal>0?(othRev/shareTotal*100).toFixed(1):0}%</span><span style="color:var(--text2);font-size:11px">${fmx(othRev)}</span></span></div>` : '');
 
   /* Categorías */
   const catTotals = {};
@@ -457,21 +588,15 @@ function render() {
     type: 'bar',
     data: { labels:catEntries.map(e=>e[0]), datasets:[{ label:'Ingresos', data:catEntries.map(e=>e[1]), backgroundColor:catEntries.map(([l])=>CATS_COL[l]||'#888'), borderRadius:4 }] },
     options: { responsive:true, maintainAspectRatio:false,
-      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>` ${fmx(ctx.raw)} (${Math.round(ctx.raw/curRev*100)}%)`}} },
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>` ${fmx(ctx.raw)} (${shareTotal>0?(ctx.raw/shareTotal*100).toFixed(1):0}%)`}} },
       scales: { y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k',font:{size:10}},grid:{color:'rgba(128,128,128,.1)'}},
                 x:{ticks:{font:{size:10},autoSkip:false},grid:{display:false}} } }
   });
   document.getElementById('cat-leg').innerHTML = catEntries.map(([l]) =>
     `<span class="leg-item"><span class="leg-sq" style="background:${CATS_COL[l]||'#888'}"></span>${l}</span>`).join('');
 
-  /* Desglose */
-  const feeAmt=Math.round(curRev*fees), taxAmt=Math.round(curRev*tax), retAmt=Math.round(curRev*ret), net2=curRev-feeAmt-taxAmt-retAmt;
-  document.getElementById('desglose').innerHTML = `
-    <div class="desg-row"><span class="desg-lbl">Ingresos brutos</span><span class="desg-val">${fmx(curRev)}</span></div>
-    <div class="desg-row"><span class="desg-lbl">Tarifas plataforma</span><span class="desg-val" style="color:var(--danger)">-${fmx(feeAmt)}<span class="desg-pct">${Math.round(fees*100)}%</span></span></div>
-    <div class="desg-row"><span class="desg-lbl">Impuestos (IVA)</span><span class="desg-val" style="color:var(--danger)">-${fmx(taxAmt)}<span class="desg-pct">${Math.round(tax*100)}%</span></span></div>
-    <div class="desg-row"><span class="desg-lbl">Devoluciones</span><span class="desg-val" style="color:var(--warning)">-${fmx(retAmt)}<span class="desg-pct">${(ret*100).toFixed(1)}%</span></span></div>
-    <div class="desg-row"><span class="desg-lbl">Ganancia neta</span><span class="desg-val" style="color:var(--success)">${fmx(net2)}<span class="desg-pct">${Math.round(net2/curRev*100)}%</span></span></div>`;
+  /* Fix 3 — Desglose interactivo */
+  renderDesglose(curRev, fees, tax, ret);
 
   /* Pedidos */
   document.getElementById('orders-kpi').innerHTML = `
@@ -501,8 +626,12 @@ function updateGroupBtns() {
 function onRangeChange() {
   const v = document.getElementById('sel-range').value;
   document.getElementById('custom-wrap').style.display = v==='custom' ? 'flex' : 'none';
-  const days = v==='custom' ? 30 : +v;
-  if (days <= 7) group='day'; else if (days <= 90) group='week'; else group='month';
+  if (v === '7d' || v === 'custom')           group = 'day';
+  else if (v === '30d' || v === 'mtd')        group = 'week';
+  else if (v === '90d')                       group = 'week';
+  else if (v === 'ytd' || v === 'prevyear')   group = 'month';
+  else if (v === 'prevmonth')                 group = 'week';
+  else                                        group = 'day';
   render();
 }
 function switchTab(t) {
