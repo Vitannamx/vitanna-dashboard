@@ -76,6 +76,7 @@
   .prod-bar-bg { flex: 1; height: 18px; background: var(--bg2); border-radius: 3px; overflow: hidden; }
   .prod-bar-fill { height: 100%; border-radius: 3px; display: flex; align-items: center; padding-left: 6px; font-size: 10px; font-weight: 500; color: #fff; white-space: nowrap; }
   .prod-amt { font-size: 11px; font-weight: 500; color: var(--text); width: 68px; text-align: right; flex-shrink: 0; }
+  .prod-units { font-size: 10px; color: var(--text3); width: 44px; text-align: right; flex-shrink: 0; }
   .prod-delta { font-size: 10px; width: 42px; text-align: right; flex-shrink: 0; }
   .share-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 0.5px solid var(--border); }
   .share-row:last-child { border-bottom: none; }
@@ -160,7 +161,13 @@
   <div class="card">
     <div class="card-title">
       Ventas totales a lo largo del tiempo
-      <span class="card-sub" id="trend-sub"></span>
+      <span style="display:flex;align-items:center;gap:8px">
+        <span class="card-sub" id="trend-sub"></span>
+        <span style="display:flex;border:0.5px solid var(--border2);border-radius:20px;overflow:hidden">
+          <button id="tm-rev" onclick="setTrendMode('rev')" style="font-size:11px;padding:3px 10px;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .15s">$ Monto</button>
+          <button id="tm-ord" onclick="setTrendMode('ord')" style="font-size:11px;padding:3px 10px;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:all .15s">&#35; Piezas</button>
+        </span>
+      </span>
     </div>
     <div class="leg" id="trend-leg"></div>
     <div style="position:relative;width:100%" id="trend-wrap">
@@ -213,7 +220,7 @@
 
 <script>
 /* ── Estado global ─────────────────────────────── */
-let tab = 'amz', group = 'week';
+let tab = 'amz', group = 'week', trendMode = 'rev';
 let trendChart, ordersChart, shareChart, catChart;
 let usingRealData = false;
 
@@ -505,18 +512,24 @@ function render() {
     { lbl:'Ganancia neta est.',      val:fmx(netRev),             delta:pct(netRev,prvNet), cmp:fmx(prvNet) },
   ].map(k=>`<div class="kpi"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-delta">${dEl(k.delta)}</div><div class="kpi-cmp">Ant: ${k.cmp}</div></div>`).join('');
 
-  /* Tendencia */
+  /* Tendencia — Fix 2: respeta trendMode rev/ord */
   const cmpTxt = document.getElementById('sel-cmp').options[document.getElementById('sel-cmp').selectedIndex].text;
   document.getElementById('trend-sub').textContent = '· ' + cmpTxt;
   document.getElementById('trend-leg').innerHTML = `
     <span class="leg-item"><span class="leg-sq" style="background:${color()}"></span>Período actual</span>
     <span class="leg-item"><span class="leg-sq" style="background:${cmpColor()};border:1px solid #aaa"></span>${cmpTxt}</span>`;
   const labels   = cg.map(x => x.label);
-  const curVals  = cg.map(x => x.rev);
-  const prvVals  = pg.map(x => x.rev);
+  const curVals  = cg.map(x => trendMode==='rev' ? x.rev : x.ord);
+  const prvVals  = pg.map(x => trendMode==='rev' ? x.rev : x.ord);
   while (prvVals.length < labels.length) prvVals.push(null);
   const h = Math.max(180, Math.min(300, Math.max(labels.length, 2) * 28 + 80));
   document.getElementById('trend-wrap').style.height = h + 'px';
+  const yFmt = trendMode==='rev'
+    ? v => '$'+Math.round(v/1000)+'k'
+    : v => Math.round(v)+' uds';
+  const ttFmt = trendMode==='rev'
+    ? (lbl,val) => lbl+': '+fmx(val||0)
+    : (lbl,val) => lbl+': '+(Math.round(val||0))+' piezas';
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(document.getElementById('trendChart').getContext('2d'), {
     type: 'line',
@@ -525,23 +538,45 @@ function render() {
       { label:'Comparativo', data:prvVals, borderColor:cmpColor(), backgroundColor:'transparent', fill:false, tension:0.35, pointRadius:3, borderDash:[5,4], pointBackgroundColor:cmpColor() }
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmx(ctx.raw||0)}} },
-      scales: { y:{ticks:{callback:v=>'$'+Math.round(v/1000)+'k',font:{size:10}},grid:{color:'rgba(128,128,128,.1)'}},
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>ttFmt(ctx.dataset.label,ctx.raw)}} },
+      scales: { y:{ticks:{callback:yFmt,font:{size:10}},grid:{color:'rgba(128,128,128,.1)'}},
                 x:{ticks:{font:{size:10},autoSkip:labels.length>20,maxRotation:45},grid:{display:false}} } }
   });
+  updateTrendToggle();
 
-  /* Productos */
+  /* Fix 1 — Productos escalados al período seleccionado */
   const hasRealProds = usingRealData && REAL[tab] && REAL[tab].products && REAL[tab].products.length;
-  const prods = hasRealProds
-    ? REAL[tab].products.map(p => ({ ...p, prv: Math.round(p.rev * 0.88) }))
-    : ALL_PRODS[tab].map(p => ({ ...p, rev: Math.round(curRev*p.share), prv: Math.round(prvRev*p.share) }));
-  const maxP  = Math.max(...prods.map(p=>p.rev), 1);
+  let prods;
+  if (hasRealProds) {
+    const fullRev  = REAL[tab].products.reduce((s,p)=>s+p.rev, 0);
+    const fullOrd  = REAL[tab].products.reduce((s,p)=>s+(p.units||0), 0);
+    const revScale = fullRev > 0 ? curRev  / fullRev : 0;
+    const ordScale = fullOrd > 0 ? curOrd  / fullOrd : 0;
+    const prvRevScale = fullRev > 0 ? prvRev / fullRev : 0;
+    prods = REAL[tab].products.map(p => ({
+      ...p,
+      rev:   Math.round(p.rev   * revScale),
+      units: Math.round((p.units||0) * ordScale),
+      prv:   Math.round(p.rev   * prvRevScale),
+    }));
+  } else {
+    prods = ALL_PRODS[tab].map(p => ({
+      ...p,
+      rev:   Math.round(curRev * p.share),
+      units: Math.round(curOrd * p.share),
+      prv:   Math.round(prvRev * p.share),
+    }));
+  }
+
+  /* Fix 3 — Tabla productos con piezas */
+  const maxP = Math.max(...prods.map(p=>p.rev), 1);
   document.getElementById('prod-list').innerHTML = prods.map(p => {
     const d = pct(p.rev, p.prv), w = Math.round(p.rev/maxP*100);
     return `<div class="prod-row">
       <div class="prod-name" title="${p.name}">${p.name}</div>
       <div class="prod-bar-bg"><div class="prod-bar-fill" style="width:${w}%;background:${color()}">${w>32?fmx(p.rev):''}</div></div>
       <div class="prod-amt">${fmx(p.rev)}</div>
+      <div class="prod-units">${(p.units||0).toLocaleString()} uds</div>
       <div class="prod-delta">${dEl(d)}</div>
     </div>`;
   }).join('');
@@ -618,6 +653,17 @@ function render() {
 }
 
 function setGroup(g) { group = g; render(); }
+function setTrendMode(m) { trendMode = m; render(); }
+function updateTrendToggle() {
+  const c = color();
+  ['rev','ord'].forEach(m => {
+    const btn = document.getElementById('tm-'+m);
+    if (!btn) return;
+    btn.style.background   = trendMode===m ? c : 'transparent';
+    btn.style.color        = trendMode===m ? (tab==='amz'?'#7A3E00':'#fff') : 'var(--text2)';
+    btn.style.fontWeight   = trendMode===m ? '600' : '400';
+  });
+}
 function updateGroupBtns() {
   ['day','week','month','year'].forEach(g => {
     document.getElementById('g-'+g).className = 'gbtn' + (group===g ? ' on-'+tab : '');
